@@ -7,11 +7,17 @@ using Google.Apis.Drive.v3;
 using Google.Apis.Drive.v3.Data;
 using System.Linq;
 using static Google.Apis.Sheets.v4.SpreadsheetsResource.ValuesResource.UpdateRequest;
+using Newtonsoft.Json;
+using System.IO;
+using System.Collections.Generic;
+using System;
+using CommandLine;
 
 namespace CodeSanook.CollaborativeLocalization
 {
     public class Program
     {
+
         // If modifying these scopes, delete your previously saved credentials
         // at ~/.credentials/sheets.googleapis.com-dotnet-quickstart.json
         const string applicationName = "CodeSanook.CollaborativeLocalization";
@@ -19,12 +25,13 @@ namespace CodeSanook.CollaborativeLocalization
 
         // Downloaded from https://console.developers.google.com 
         const string keyFilePath = @"service-account-private-key.p12";
+
         private static DriveService driverService;
         private static SheetsService sheetService;
         private static string[] sheetNames = new[] { "en", "th" };
-        private static string[] sharedEmails = new [] { "" };
+        private static string[] sharedEmails = new[] { "" };
 
-        static void Main(string[] args)
+        private static void RunExportOptions(ExportOptions exportOptions)
         {
             //loading the Key file
             var certificate = new X509Certificate2(keyFilePath, "notasecret", X509KeyStorageFlags.Exportable);
@@ -51,9 +58,89 @@ namespace CodeSanook.CollaborativeLocalization
             if (string.IsNullOrEmpty(spreadsheetId))
             {
                 spreadsheetId = CreateSpreadsheet();
+                UpdateCellValues(spreadsheetId);
             }
 
-            UpdateCellValues(spreadsheetId);
+            foreach (var sheetName in sheetNames)
+            {
+                ExportToJson(spreadsheetId, sheetName, exportOptions);
+            }
+        }
+
+        public static void Main(string[] args)
+        {
+            Parser.Default.ParseArguments<ExportOptions>(args)
+            .WithParsed(exportOptions => RunExportOptions(exportOptions))
+            .WithNotParsed(errs => { });
+        }
+
+        private static void ExportToJson(string spreadsheetId, string sheetName, ExportOptions exportOptions)
+        {
+            var request = sheetService.Spreadsheets.Values.Get(spreadsheetId, $"'{sheetName}'!A:B");
+            var response = request.Execute();
+            var values = response.Values;
+
+            //Skip the first row as a header
+            var localeData = new Dictionary<object, object>();
+            for (var rowIndex = 1; rowIndex < values.Count; rowIndex++)
+            {
+                var row = values[rowIndex];
+                if (row.Count != 2 || string.IsNullOrWhiteSpace(row[0]?.ToString()) || string.IsNullOrWhiteSpace(row[1]?.ToString()))
+                {
+                    throw new InvalidOperationException($"sheet name '{sheetName}', row number {rowIndex + 1} has empty key or value, please fix it and run the tool again.");
+                }
+
+                var key = row[0].ToString().Trim();
+                var value = row[1].ToString().Trim();
+                key = UpdateKeyToUpperCaseIfRequired(spreadsheetId, sheetName, exportOptions, rowIndex, key);
+                localeData.Add(key, value);
+            }
+
+            var exportedLocale = JsonConvert.SerializeObject(localeData, Formatting.Indented);
+            var exportedFilePath = Path.GetFullPath(Path.Combine(exportOptions.OutputDir, $"{sheetName}.json"));
+            var fileInfo = new FileInfo(exportedFilePath);
+            fileInfo.Directory.Create();
+
+            using (var fileStream = new FileStream(exportedFilePath, FileMode.Create, FileAccess.Write))
+            using (var streamWriter = new StreamWriter(fileStream))
+            {
+                streamWriter.Write(exportedLocale);
+            }
+            Console.WriteLine($"{exportedFilePath} exported");
+        }
+
+        private static string UpdateKeyToUpperCaseIfRequired(
+            string spreadsheetId,
+            string sheetName,
+            ExportOptions exportOptions,
+            int rowIndex,
+            string key
+        )
+        {
+            if (!exportOptions.UpdateKeyToUpperCase) return key;
+
+            var anyLowerCaseCharacterInKey = key.ToArray().Any(c => char.IsLetter(c) && char.IsLower(c));
+            if (anyLowerCaseCharacterInKey)
+            {
+
+                key = key.ToUpper();
+                UpdateKeyValue(spreadsheetId, sheetName, rowIndex, key);
+            }
+            return key;
+        }
+
+        private static void UpdateKeyValue(string spreadsheetId, string sheetName, int rowIndex, string key)
+        {
+            //array that member is array
+            var valueRange = new ValueRange
+            {
+                Values = new string[][] { new[] { key } }
+            };
+            var cellRange = $"'{sheetName}'!A{rowIndex + 1}";
+
+            var request = sheetService.Spreadsheets.Values.Update(valueRange, spreadsheetId, cellRange);
+            request.ValueInputOption = ValueInputOptionEnum.USERENTERED;
+            var response = request.Execute();
         }
 
         private static void UpdateCellValues(string spreadsheetId)
