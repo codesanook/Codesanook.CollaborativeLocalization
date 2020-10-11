@@ -17,64 +17,66 @@ namespace CodeSanook.CollaborativeLocalization
 {
     public class Program
     {
-
-        // If modifying these scopes, delete your previously saved credentials
-        // at ~/.credentials/sheets.googleapis.com-dotnet-quickstart.json
-        const string applicationName = "CodeSanook.CollaborativeLocalization";
-        const string serviceAccountEmail = "collaborative-localization@codesanook.iam.gserviceaccount.com";
-
-        // Downloaded from https://console.developers.google.com 
+        // Downloaded from https://console.developers.google.com  
+        // Put to root rectory and set copy to output directory "copy if newer"
         const string keyFilePath = @"service-account-private-key.p12";
 
         private static DriveService driverService;
         private static SheetsService sheetService;
-        private static string[] sheetNames = new[] { "en", "th" };
-        private static string[] sharedEmails = new[] { "" };
 
-        private static void RunExportOptions(ExportOptions exportOptions)
+        public static void Main(string[] args)
         {
-            //loading the Key file
-            var certificate = new X509Certificate2(keyFilePath, "notasecret", X509KeyStorageFlags.Exportable);
-            var credential = new ServiceAccountCredential(new ServiceAccountCredential.Initializer(serviceAccountEmail)
-            {
-                Scopes = new[] { DriveService.Scope.Drive, SheetsService.Scope.Spreadsheets },
+            Parser.Default.ParseArguments<ExportOptions>(args)
+            .WithParsed(exportOptions => RunExportOptions(exportOptions))
+            .WithNotParsed(errs => { Console.WriteLine(errs); });
+        }
 
-            }.FromCertificate(certificate));
+        private static void RunExportOptions(ExportOptions options)
+        {
+            // Load the Key file
+            var certificate = new X509Certificate2(
+                keyFilePath,
+                "notasecret",
+                X509KeyStorageFlags.Exportable
+            );
 
+            // If modifying these scopes, delete your previously saved credentials
+            var credential = new ServiceAccountCredential(
+                new ServiceAccountCredential.Initializer(options.ServiceAccountEmail)
+                {
+                    Scopes = new[] { DriveService.Scope.Drive, SheetsService.Scope.Spreadsheets },
+                }.FromCertificate(certificate)
+            );
+
+            // Create Google driver service.
             driverService = new DriveService(new BaseClientService.Initializer()
             {
                 HttpClientInitializer = credential,
-                ApplicationName = applicationName
+                ApplicationName = options.ApplicationName
             });
 
             // Create Google Sheets API service.
             sheetService = new SheetsService(new BaseClientService.Initializer()
             {
                 HttpClientInitializer = credential,
-                ApplicationName = applicationName,
+                ApplicationName = options.ApplicationName,
             });
 
-            var spreadsheetId = GetSpreadsheetId();
+            var spreadsheetId = GetSpreadsheetId(options);
+            // Create sheet if does not exist
             if (string.IsNullOrEmpty(spreadsheetId))
             {
-                spreadsheetId = CreateSpreadsheet();
-                UpdateCellValues(spreadsheetId);
+                spreadsheetId = CreateSpreadsheet(options);
+                InitialCellValues(spreadsheetId, options);
             }
 
-            foreach (var sheetName in sheetNames)
+            foreach (var sheetName in options.SupportedLanguages)
             {
-                ExportToJson(spreadsheetId, sheetName, exportOptions);
+                ExportToJson(spreadsheetId, sheetName, options);
             }
         }
 
-        public static void Main(string[] args)
-        {
-            Parser.Default.ParseArguments<ExportOptions>(args)
-            .WithParsed(exportOptions => RunExportOptions(exportOptions))
-            .WithNotParsed(errs => { });
-        }
-
-        private static void ExportToJson(string spreadsheetId, string sheetName, ExportOptions exportOptions)
+        private static void ExportToJson(string spreadsheetId, string sheetName, ExportOptions options)
         {
             var request = sheetService.Spreadsheets.Values.Get(spreadsheetId, $"'{sheetName}'!A:B");
             var response = request.Execute();
@@ -92,12 +94,12 @@ namespace CodeSanook.CollaborativeLocalization
 
                 var key = row[0].ToString().Trim();
                 var value = row[1].ToString().Trim();
-                key = UpdateKeyToUpperCaseIfRequired(spreadsheetId, sheetName, exportOptions, rowIndex, key);
+                key = UpdateLocalizationKeyToUpperCaseIfRequired(spreadsheetId, sheetName, options, rowIndex, key);
                 localeData.Add(key, value);
             }
 
             var exportedLocale = JsonConvert.SerializeObject(localeData, Formatting.Indented);
-            var exportedFilePath = Path.GetFullPath(Path.Combine(exportOptions.OutputDir, $"{sheetName}.json"));
+            var exportedFilePath = Path.GetFullPath(Path.Combine(options.OutputDir, $"{sheetName}.json"));
             var fileInfo = new FileInfo(exportedFilePath);
             fileInfo.Directory.Create();
 
@@ -109,121 +111,139 @@ namespace CodeSanook.CollaborativeLocalization
             Console.WriteLine($"{exportedFilePath} exported");
         }
 
-        private static string UpdateKeyToUpperCaseIfRequired(
+        private static string UpdateLocalizationKeyToUpperCaseIfRequired(
             string spreadsheetId,
             string sheetName,
             ExportOptions exportOptions,
             int rowIndex,
-            string key
+            string localizationKey
         )
         {
-            if (!exportOptions.UpdateKeyToUpperCase) return key;
+            if (!exportOptions.UpdateKeyToUpperCase) return localizationKey;
 
-            var anyLowerCaseCharacterInKey = key.ToArray().Any(c => char.IsLetter(c) && char.IsLower(c));
+            // Prevent unnecessary update and web request
+            var anyLowerCaseCharacterInKey =
+                localizationKey.ToArray()
+                .Any(c => char.IsLetter(c) && char.IsLower(c));
             if (anyLowerCaseCharacterInKey)
             {
-
-                key = key.ToUpper();
-                UpdateKeyValue(spreadsheetId, sheetName, rowIndex, key);
+                localizationKey = localizationKey.ToUpper();
+                UpdateLocalizationKey(spreadsheetId, sheetName, rowIndex, localizationKey);
             }
-            return key;
+            return localizationKey;
         }
 
-        private static void UpdateKeyValue(string spreadsheetId, string sheetName, int rowIndex, string key)
+        private static void UpdateLocalizationKey(
+            string spreadsheetId,
+            string sheetName,
+            int rowIndex,
+            string localizationKey
+        )
         {
-            //array that member is array
-            var valueRange = new ValueRange
-            {
-                Values = new string[][] { new[] { key } }
-            };
+            // Array which its member is a array (2 dimensions array)
+            var valueRange = new ValueRange { Values = new string[][] { new[] { localizationKey } } };
             var cellRange = $"'{sheetName}'!A{rowIndex + 1}";
 
             var request = sheetService.Spreadsheets.Values.Update(valueRange, spreadsheetId, cellRange);
             request.ValueInputOption = ValueInputOptionEnum.USERENTERED;
-            var response = request.Execute();
+            request.Execute();
         }
 
-        private static void UpdateCellValues(string spreadsheetId)
+        private static void InitialCellValues(string spreadsheetId, ExportOptions options)
         {
-            UpdateHeader(spreadsheetId, sheetNames[0], "A1:B1", new[] { "Key", "Value" });
-            UpdateHeader(spreadsheetId, sheetNames[1], "A1:B1", new[] { "Key", "Value" });
+            var sheetNames = options.SupportedLanguages.ToArray();
+            foreach (var sheetName in sheetNames)
+            {
+                UpdateHeader(spreadsheetId, sheetName, "A1:B1", new[] { "Localization Key", "Localization Value" });
+            }
 
+            // Auto create 500 cells on the first sheet 
             var rowCount = 500;
-            var values = Enumerable.Range(2, rowCount).Select(value => new[] { $"='{sheetNames[0]}'!A{value}" }).ToArray();
+            // Take a localization keys from a first sheet tab and fill to other tabs
+            var values = Enumerable.Range(2, rowCount)
+                 .Select(value => new[] { $"='{sheetNames[0]}'!A{value}" })
+                 .ToArray();
             var body = new ValueRange { Values = values };
 
-            var request = sheetService.Spreadsheets.Values.Update(body, spreadsheetId, $"'{sheetNames[1]}'!A2:A{rowCount + 1}");
-            request.ValueInputOption = ValueInputOptionEnum.USERENTERED;
-            var response = request.Execute();
+            for (var sheetIndex = 1; sheetIndex < sheetNames.Length; sheetIndex++)
+            {
+                var request = sheetService.Spreadsheets.Values.Update(
+                    body,
+                    spreadsheetId,
+                    $"'{sheetNames[sheetIndex]}'!A2:A{rowCount + 1}"
+                );
+                request.ValueInputOption = ValueInputOptionEnum.USERENTERED;
+                request.Execute();
+            }
         }
 
         private static void UpdateHeader(string spreadsheetId, string sheetName, string cellRange, object[] headerTitles)
         {
-            var body = new ValueRange
-            {
-                Values = new[]
-                {
-                    headerTitles
-                }
-            };
+            var body = new ValueRange { Values = new[] { headerTitles } };
             var request = sheetService.Spreadsheets.Values.Update(body, spreadsheetId, $"'{sheetName}'!{cellRange}");
             request.ValueInputOption = ValueInputOptionEnum.USERENTERED;
-            var response = request.Execute();
+            request.Execute();
         }
 
-        private static string CreateSpreadsheet()
+        private static string CreateSpreadsheet(ExportOptions options)
         {
-            var sheets = sheetNames.Select(title =>
+            var sheets = options.SupportedLanguages.Select(title =>
                new Sheet() { Properties = new SheetProperties() { Title = title } }
             ).ToList();
 
             var spreadSheet = new Spreadsheet
             {
-                Properties = new SpreadsheetProperties() { Title = applicationName },
+                Properties = new SpreadsheetProperties() { Title = options.SheetName },
                 Sheets = sheets
             };
             var createSpreadSheetResponse = sheetService.Spreadsheets.Create(spreadSheet).Execute();
 
-            //update permission
-            var file = driverService.Files.Get(createSpreadSheetResponse.SpreadsheetId).Execute();
-            var permission = new Permission();
-            permission.Role = "writer";
-            permission.Type = "user";
-            permission.EmailAddress = sharedEmails[0];
-            var request = driverService.Permissions.Create(permission, file.Id);
-            //request.TransferOwnership = true; //work only same domain
-            request.Execute();
+            ShareWritePerssion(createSpreadSheetResponse, options);
             return createSpreadSheetResponse.SpreadsheetId;
         }
 
-        private static string GetSpreadsheetId()
+        private static void ShareWritePerssion(Spreadsheet createSpreadSheetResponse, ExportOptions options)
+        {
+            foreach (var email in options.SharedToEmails)
+            {
+                // Update permission
+                var file = driverService.Files.Get(createSpreadSheetResponse.SpreadsheetId).Execute();
+                var permission = new Permission
+                {
+                    Role = "writer",
+                    Type = "user",
+                    EmailAddress = email
+                };
+
+                //request.TransferOwnership = true; // Work only same domain email, e.g google app for business
+                var request = driverService.Permissions.Create(permission, file.Id);
+                request.Execute();
+            }
+        }
+
+        private static string GetSpreadsheetId(ExportOptions option)
         {
             var listRequest = driverService.Files.List();
             //https://developers.google.com/drive/api/v3/reference/query-ref
-            listRequest.Q = $"name='{applicationName}' and mimeType='application/vnd.google-apps.spreadsheet'";
+            listRequest.Q = $"name='{option.SheetName}' and mimeType='application/vnd.google-apps.spreadsheet'";
             var files = listRequest.Execute().Files;
-            return files.SingleOrDefault(f => f.Name == applicationName)?.Id;
+            return files.SingleOrDefault(f => f.Name == option.SheetName)?.Id;
         }
     }
 }
 
-//for (int index = 0; index < files.Count; index++)
-//{
-//    driverService.Files.Delete(files[index].Id).Execute();
-//}
+// Tips create and delete a file
 
-//return;
 //var file = new File();
 //file.Name = applicationName;
 //file.MimeType = "application/vnd.google-apps.spreadsheet";
 //var insert = driverService.Files.Create(file);
 //var response = file = insert.Execute();
 
+//for (int index = 0; index < files.Count; index++)
+//{
+//    driverService.Files.Delete(files[index].Id).Execute();
+//}
+
 //var fileResponse =  driverService.Files.Get(response.Id).Execute();
-// fileResponse.
-
-
-
-/*
-*/
 
