@@ -6,21 +6,21 @@ using Google.Apis.Sheets.v4.Data;
 using Google.Apis.Drive.v3;
 using Google.Apis.Drive.v3.Data;
 using System.Linq;
-using static Google.Apis.Sheets.v4.SpreadsheetsResource.ValuesResource.UpdateRequest;
 using Newtonsoft.Json;
 using System.IO;
 using System.Collections.Generic;
 using System;
 using CommandLine;
+using static Google.Apis.Sheets.v4.SpreadsheetsResource.ValuesResource.UpdateRequest;
+using file = System.IO.File;
 
 namespace CodeSanook.CollaborativeLocalization
 {
-    public class Program
+    public static class Program
     {
-        // Downloaded from https://console.developers.google.com  
-        // Put to root rectory and set copy to output directory "copy if newer"
-        const string keyFilePath = @"service-account-private-key.p12";
-
+        // Downloaded p12 key file from https://console.developers.google.com 
+        // Put it to a working directory that we call CodeSanook.CollaborativeLocalization.exe
+        private const string keyFilePath = "service-account-private-key.p12";
         private static DriveService driverService;
         private static SheetsService sheetService;
 
@@ -28,11 +28,16 @@ namespace CodeSanook.CollaborativeLocalization
         {
             Parser.Default.ParseArguments<ExportOptions>(args)
             .WithParsed(exportOptions => RunExportOptions(exportOptions))
-            .WithNotParsed(errs => { Console.WriteLine(errs); });
+            .WithNotParsed(errs => Console.WriteLine(errs));
         }
 
         private static void RunExportOptions(ExportOptions options)
         {
+            if (!file.Exists(keyFilePath))
+            {
+                throw new InvalidOperationException("No 'service-account-private-key.p12' in the current working directory");
+            }
+
             // Load the Key file
             var certificate = new X509Certificate2(
                 keyFilePath,
@@ -44,7 +49,11 @@ namespace CodeSanook.CollaborativeLocalization
             var credential = new ServiceAccountCredential(
                 new ServiceAccountCredential.Initializer(options.ServiceAccountEmail)
                 {
-                    Scopes = new[] { DriveService.Scope.Drive, SheetsService.Scope.Spreadsheets },
+                    Scopes = new[]
+                    {
+                        DriveService.Scope.Drive,
+                        SheetsService.Scope.Spreadsheets
+                    },
                 }.FromCertificate(certificate)
             );
 
@@ -63,11 +72,12 @@ namespace CodeSanook.CollaborativeLocalization
             });
 
             var spreadsheetId = GetSpreadsheetId(options);
-            // Create sheet if does not exist
             if (string.IsNullOrEmpty(spreadsheetId))
             {
+                // Create sheet if does not exist
                 spreadsheetId = CreateSpreadsheet(options);
                 InitialCellValues(spreadsheetId, options);
+                Console.WriteLine($"Sheet name '{spreadsheetId}' is created");
             }
 
             foreach (var sheetName in options.SupportedLanguages)
@@ -82,7 +92,7 @@ namespace CodeSanook.CollaborativeLocalization
             var response = request.Execute();
             var values = response.Values;
 
-            //Skip the first row as a header
+            // Skip the first row as a header
             var localeData = new Dictionary<object, object>();
             for (var rowIndex = 1; rowIndex < values.Count; rowIndex++)
             {
@@ -108,7 +118,7 @@ namespace CodeSanook.CollaborativeLocalization
             {
                 streamWriter.Write(exportedLocale);
             }
-            Console.WriteLine($"{exportedFilePath} exported");
+            Console.WriteLine($"'{exportedFilePath}' exported");
         }
 
         private static string UpdateLocalizationKeyToUpperCaseIfRequired(
@@ -158,7 +168,7 @@ namespace CodeSanook.CollaborativeLocalization
             }
 
             // Auto create 500 cells on the first sheet 
-            var rowCount = 500;
+            const int rowCount = 500;
             // Take a localization keys from a first sheet tab and fill to other tabs
             var values = Enumerable.Range(2, rowCount)
                  .Select(value => new[] { $"='{sheetNames[0]}'!A{value}" })

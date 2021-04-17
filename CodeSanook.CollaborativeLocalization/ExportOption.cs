@@ -3,25 +3,38 @@ using System.Collections.Generic;
 
 namespace CodeSanook.CollaborativeLocalization
 {
-    [Verb("export", HelpText = "Export a Google Spreadsheet localization to JSON file")]
+    [Verb("export", HelpText = "Export a Google Spreadsheet localization sheet to JSON file")]
     public class ExportOptions
     {
-        [Option("output-dir", Required = true, HelpText = "A target directory for an output JSON file")]
+        [Option(
+            "output-dir",
+            HelpText = "An ouput directory of JSON local file, default to a current working directory",
+            Required = false,
+            Default = "."
+        )]
         public string OutputDir { get; set; }
+
+        [Option(
+            "sheet-name",
+            Required = false,
+            HelpText = "Gooogle sheet name, it will be created automatically if it does exist",
+            Default = "Codesanook.CollaborativeLocalization"
+        )]
+        public string SheetName { get; set; }
 
         [Option(
             "key-to-upper-case",
             Required = false,
-            HelpText = "Should set a localization key to upper case automatically"
+            HelpText = "Set a localization key to upper case automatically",
+            Default = true
         )]
         public bool UpdateKeyToUpperCase { get; set; }
 
-        // https://github.com/commandlineparser/commandline/wiki/CommandLine-Grammar#sequence-option
-        // Sequence option
+        // Sequence option https://github.com/commandlineparser/commandline/wiki/CommandLine-Grammar#sequence-option
         [Option(
             "supported-languages",
             Required = false,
-            HelpText = "Set a supported language for localization",
+            HelpText = "Space seperated value of supported language, these values match all sheet tabs",
             Default = new[] { "en", "th" }
         )]
         public IEnumerable<string> SupportedLanguages { get; set; }
@@ -29,34 +42,26 @@ namespace CodeSanook.CollaborativeLocalization
         [Option(
             "shared-to-emails",
             Required = false,
-            HelpText = "Set emails to share a write permission to this sheet",
+            HelpText = "Space separated values emails to share a write permission to the working sheet",
             Default = new string[] { }
         )]
         public IEnumerable<string> SharedToEmails { get; set; }
 
         [Option(
-            "application-name",
+            "service-account-email",
             Required = false,
-            HelpText = "Set Google API application name",
-            Default = "CodeSanook.CollaborativeLocalization"
-        )]
-        public string ApplicationName { get; set; }
-
-        [Option(
-            "application-name",
-            Required = false,
-            HelpText = "Set service account email",
+            HelpText = "Service account email",
             Default = "collaborative-localization@codesanook.iam.gserviceaccount.com"
         )]
         public string ServiceAccountEmail { get; set; }
 
         [Option(
-            "sheet-name",
+            "application-name",
             Required = false,
-            HelpText = "Set Gooogle sheet name that you can find in Google drive",
-            Default = "CodeSanook.CollaborativeLocalization"
+            HelpText = "Google API application name",
+            Default = "Codesanook.CollaborativeLocalization"
         )]
-        public string SheetName { get; set; }
+        public string ApplicationName { get; set; }
     }
 }
 
